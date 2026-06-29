@@ -609,7 +609,34 @@
         <button class="btn btn-primary" id="btnVendaConfirmar" type="button">Confirmar lançamento</button>
         <button class="btn btn-secondary" id="btnVendaCancelar" type="button">Cancelar</button>
       </div>
+
+      <div class="panel" id="mediasVendasPanel" style="margin-top:18px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px;">
+          <div>
+            <h3 style="margin:0;">Médias de venda por item</h3>
+            <div class="hint" id="mediasIntervaloLabel">—</div>
+          </div>
+          <button class="btn btn-secondary" id="btnMediasCSV" type="button">Exportar CSV</button>
+        </div>
+        <div class="tabs-inline" id="mediasAtalhos" style="margin-top:10px;">
+          <button data-mperiodo="7" type="button">7 dias</button>
+          <button class="active" data-mperiodo="30" type="button">30 dias</button>
+          <button data-mperiodo="90" type="button">90 dias</button>
+          <button data-mperiodo="mes" type="button">Este mês</button>
+          <button data-mperiodo="tudo" type="button">Tudo</button>
+        </div>
+        <div class="field" style="margin-top:10px;">
+          <input id="mediasBusca" type="text" placeholder="Buscar item por código ou descrição…">
+        </div>
+        <div style="overflow-x:auto;margin-top:6px;">
+          <table>
+            <thead><tr><th>Código</th><th>Descrição</th><th class="num">Qtd vendida</th><th class="num">Média diária</th><th class="num">Média semanal</th><th class="num">Média mensal</th></tr></thead>
+            <tbody id="mediasVendasBody"></tbody>
+          </table>
+        </div>
+      </div>
     </section>
+
 
     <!-- HISTÓRICO -->
     <section id="view-historico" hidden>
@@ -1453,7 +1480,88 @@ function renderVendas(){
   fillMaterialSelect(document.getElementById('vendaManualMaterial'));
   document.getElementById('vendaPreviewPanel').hidden = true;
   vendaParsed = null;
+  renderMediasVendas();
 }
+
+let mediasPeriodo = '30';
+let mediasBuscaTxt = '';
+function calcMediasIntervalo(p){
+  const fim = new Date(); fim.setHours(23,59,59,999);
+  let ini = new Date(fim);
+  if(p==='7'){ ini.setDate(fim.getDate()-6); }
+  else if(p==='30'){ ini.setDate(fim.getDate()-29); }
+  else if(p==='90'){ ini.setDate(fim.getDate()-89); }
+  else if(p==='mes'){ ini = new Date(fim.getFullYear(), fim.getMonth(), 1); }
+  else if(p==='tudo'){
+    const vendas = movements.filter(m=>m.tipo==='venda');
+    if(!vendas.length){ ini = new Date(fim); }
+    else { ini = new Date(Math.min(...vendas.map(m=> new Date(m.ts).getTime()))); }
+  }
+  ini.setHours(0,0,0,0);
+  const dias = Math.max(1, Math.round((fim - ini)/86400000) + 1);
+  return { ini, fim, dias };
+}
+function fmtData(d){ return d.toLocaleDateString('pt-BR'); }
+function fmtMedia(v){ return v>0 ? v.toFixed(2).replace('.',',') : '—'; }
+function calcMediasRows(){
+  const { ini, fim, dias } = calcMediasIntervalo(mediasPeriodo);
+  const map = new Map();
+  for(const m of movements){
+    if(m.tipo!=='venda') continue;
+    const t = new Date(m.ts);
+    if(t<ini || t>fim) continue;
+    const cod = String(m.codigo);
+    const it = map.get(cod) || { codigo: cod, descricao: m.descricao, qtd: 0 };
+    it.qtd += Number(m.quantidade)||0;
+    it.descricao = m.descricao || it.descricao;
+    map.set(cod, it);
+  }
+  const semanas = dias/7, meses = dias/30;
+  const rows = [...map.values()].map(r=> ({
+    ...r,
+    mediaDia: r.qtd/dias,
+    mediaSem: r.qtd/semanas,
+    mediaMes: r.qtd/meses
+  })).sort((a,b)=> b.mediaDia - a.mediaDia);
+  return { rows, ini, fim, dias };
+}
+function renderMediasVendas(){
+  const lbl = document.getElementById('mediasIntervaloLabel');
+  const body = document.getElementById('mediasVendasBody');
+  if(!body) return;
+  document.querySelectorAll('#mediasAtalhos [data-mperiodo]').forEach(b=> b.classList.toggle('active', b.dataset.mperiodo===mediasPeriodo));
+  const { rows, ini, fim, dias } = calcMediasRows();
+  lbl.textContent = 'Período: '+fmtData(ini)+' até '+fmtData(fim)+' ('+dias+' dia'+(dias>1?'s':'')+')';
+  const q = mediasBuscaTxt.trim().toLowerCase();
+  const filt = q ? rows.filter(r => r.codigo.toLowerCase().includes(q) || (r.descricao||'').toLowerCase().includes(q)) : rows;
+  if(!filt.length){
+    body.innerHTML = '<tr><td colspan="6" class="hint" style="text-align:center;padding:14px;">Nenhuma venda no período.</td></tr>';
+    return;
+  }
+  body.innerHTML = filt.map(r => '<tr>'+
+    '<td class="mono">'+r.codigo+'</td>'+
+    '<td>'+(r.descricao||'')+'</td>'+
+    '<td class="num mono">'+r.qtd+'</td>'+
+    '<td class="num mono">'+fmtMedia(r.mediaDia)+'</td>'+
+    '<td class="num mono">'+fmtMedia(r.mediaSem)+'</td>'+
+    '<td class="num mono">'+fmtMedia(r.mediaMes)+'</td>'+
+    '</tr>').join('');
+}
+function exportarMediasCSV(){
+  const { rows, ini, fim, dias } = calcMediasRows();
+  const head = ['Codigo','Descricao','Qtd vendida','Media diaria','Media semanal','Media mensal'];
+  const lines = [head.join(';')];
+  for(const r of rows){
+    lines.push([r.codigo, '"'+(r.descricao||'').replace(/"/g,'""')+'"', r.qtd, r.mediaDia.toFixed(4), r.mediaSem.toFixed(4), r.mediaMes.toFixed(4)].join(';'));
+  }
+  const blob = new Blob(['\ufeff'+lines.join('\n')], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'medias-vendas_'+fmtData(ini).replace(/\//g,'-')+'_a_'+fmtData(fim).replace(/\//g,'-')+'.csv';
+  a.click();
+  setTimeout(()=> URL.revokeObjectURL(url), 1000);
+}
+
 function setVendaModo(modo){
   document.querySelectorAll('[data-vendamodo]').forEach(b=> b.classList.toggle('active', b.dataset.vendamodo===modo));
   document.getElementById('vendaModoTexto').hidden = modo!=='texto';
@@ -1747,6 +1855,12 @@ function bindEvents(){
     document.getElementById('vendaPreviewPanel').hidden = true;
     vendaParsed = null;
   });
+  document.querySelectorAll('#mediasAtalhos [data-mperiodo]').forEach(b=>{
+    b.addEventListener('click', ()=>{ mediasPeriodo = b.dataset.mperiodo; renderMediasVendas(); });
+  });
+  document.getElementById('mediasBusca').addEventListener('input', (e)=>{ mediasBuscaTxt = e.target.value; renderMediasVendas(); });
+  document.getElementById('btnMediasCSV').addEventListener('click', exportarMediasCSV);
+
 
   // Histórico
   document.getElementById('histSearch').addEventListener('input', renderHistorico);
