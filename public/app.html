@@ -609,7 +609,34 @@
         <button class="btn btn-primary" id="btnVendaConfirmar" type="button">Confirmar lançamento</button>
         <button class="btn btn-secondary" id="btnVendaCancelar" type="button">Cancelar</button>
       </div>
+
+      <div class="panel" id="mediasVendasPanel" style="margin-top:18px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px;">
+          <div>
+            <h3 style="margin:0;">Médias de venda por item</h3>
+            <div class="hint" id="mediasIntervaloLabel">—</div>
+          </div>
+          <button class="btn btn-secondary" id="btnMediasCSV" type="button">Exportar CSV</button>
+        </div>
+        <div class="tabs-inline" id="mediasAtalhos" style="margin-top:10px;">
+          <button data-mperiodo="7" type="button">7 dias</button>
+          <button class="active" data-mperiodo="30" type="button">30 dias</button>
+          <button data-mperiodo="90" type="button">90 dias</button>
+          <button data-mperiodo="mes" type="button">Este mês</button>
+          <button data-mperiodo="tudo" type="button">Tudo</button>
+        </div>
+        <div class="field" style="margin-top:10px;">
+          <input id="mediasBusca" type="text" placeholder="Buscar item por código ou descrição…">
+        </div>
+        <div style="overflow-x:auto;margin-top:6px;">
+          <table>
+            <thead><tr><th>Código</th><th>Descrição</th><th class="num">Qtd vendida</th><th class="num">Média diária</th><th class="num">Média semanal</th><th class="num">Média mensal</th></tr></thead>
+            <tbody id="mediasVendasBody"></tbody>
+          </table>
+        </div>
+      </div>
     </section>
+
 
     <!-- HISTÓRICO -->
     <section id="view-historico" hidden>
