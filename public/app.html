@@ -1855,6 +1855,12 @@ function bindEvents(){
     document.getElementById('vendaPreviewPanel').hidden = true;
     vendaParsed = null;
   });
+  document.querySelectorAll('#mediasAtalhos [data-mperiodo]').forEach(b=>{
+    b.addEventListener('click', ()=>{ mediasPeriodo = b.dataset.mperiodo; renderMediasVendas(); });
+  });
+  document.getElementById('mediasBusca').addEventListener('input', (e)=>{ mediasBuscaTxt = e.target.value; renderMediasVendas(); });
+  document.getElementById('btnMediasCSV').addEventListener('click', exportarMediasCSV);
+
 
   // Histórico
   document.getElementById('histSearch').addEventListener('input', renderHistorico);
