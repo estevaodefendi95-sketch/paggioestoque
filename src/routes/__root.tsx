@@ -76,7 +76,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   head: () => ({
     meta: [
       { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1" },
+      { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
+      { name: "theme-color", content: "#BD6A2C" },
+      { name: "apple-mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" },
+      { name: "apple-mobile-web-app-title", content: "Paggio Estoque" },
+      { name: "mobile-web-app-capable", content: "yes" },
       { title: "Paggio estoque" },
       { name: "description", content: "Build It Alike creates identical copies of existing web applications, replicating their structure and functionality." },
       { name: "author", content: "Lovable" },
@@ -91,10 +96,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/43185278-29eb-4aa8-b7c2-0fcb7712275d/id-preview-ca3653de--4af45ed4-449b-46bb-9461-24c3f9eda44e.lovable.app-1782492663701.png" },
     ],
     links: [
-      {
-        rel: "stylesheet",
-        href: appCss,
-      },
+      { rel: "stylesheet", href: appCss },
+      { rel: "manifest", href: "/manifest.webmanifest" },
+      { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
+      { rel: "icon", type: "image/png", href: "/icon-192.png" },
     ],
   }),
   shellComponent: RootShell,
