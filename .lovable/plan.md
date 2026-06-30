@@ -1,42 +1,10 @@
-# Médias de Venda por Item
+Tarefa: aplicar a imagem .ico enviada como logo em dois lugares — favicon do navegador e menu lateral do app.
 
-Adicionar, dentro da tela **Vendas** do `public/app.html`, um painel que mostra a média de venda de cada item nos períodos **diária, semanal e mensal**, com atalhos rápidos de intervalo.
+1. Copiar a imagem enviada para `public/logo.ico`.
+2. Atualizar `src/routes/__root.tsx`: trocar o `<link rel="icon">` atual (`/icon-192.png`) para apontar para `/logo.ico`.
+3. Atualizar `public/app.html`:
+   - Inserir uma tag `<img>` dentro da div `.brand` (acima do texto "Controle de Estoque · Paggio Gastro Bar") apontando para `/logo.ico`.
+   - Ajustar o CSS da classe `.brand` para exibir a imagem com tamanho apropriado (ex.: 40–48 px de altura, centralizada ou alinhada à esquerda) e manter o texto ao lado ou abaixo conforme o layout.
+4. Nota: o `manifest.webmanifest` continua com os ícones PNG atuais (`icon-192.png`, `icon-512.png`) porque o formato .ico não é compatível com as especificações do PWA para ícones de tela inicial. A mudança afeta apenas o favicon da aba e o logo visual dentro do app.
 
-## UI
-
-Acima (ou abaixo) da listagem atual de vendas, novo bloco "Médias de Venda por Item":
-
-- Barra de atalhos: `7 dias` · `30 dias` · `90 dias` · `Este mês` · `Tudo` (default: 30 dias).
-- Indicador do intervalo efetivo aplicado (datas de/até calculadas).
-- Tabela ordenada por "Média diária" desc:
-
-```text
-Item | Qtd vendida | Média diária | Média semanal | Média mensal
-```
-
-- Campo de busca por nome do item.
-- Botão "Exportar CSV" das médias do período selecionado.
-
-Visual seguindo os tokens já existentes (ink/paper/copper/sage, Oswald nos títulos, IBM Plex Mono nos números).
-
-## Cálculo
-
-Para o intervalo escolhido `[início, fim]`:
-
-- `dias = max(1, (fim - início) em dias + 1)` considerando apenas dias dentro do intervalo com pelo menos uma venda registrada quando atalho = "Tudo"; para atalhos fixos (7/30/90/mês) usar a janela completa do atalho.
-- `semanas = dias / 7`
-- `meses = dias / 30` (aproximação consistente com atalhos)
-- Para cada item: somar quantidade vendida no intervalo a partir de `vendas` no localStorage.
-- `média diária = qtd / dias`, `semanal = qtd / semanas`, `mensal = qtd / meses`.
-- Formatar com 2 casas; mostrar `—` quando qtd = 0.
-
-## Implementação
-
-Tudo dentro de `public/app.html` (sistema é um único HTML embarcado em iframe):
-
-1. Adicionar a section/markup do painel na aba Vendas.
-2. Adicionar função `renderMediasVendas()` que lê `vendas` do localStorage, aplica filtro de período e busca, e renderiza a tabela.
-3. Religar nos eventos: troca de atalho, busca, e após cada nova venda salva.
-4. Exportar CSV via Blob (mesmo padrão de export já usado no arquivo).
-
-Sem mudanças de dados persistidos nem de outras telas.
+Nenhuma dependência nova necessária. Alteração puramente de assets e marcação.
