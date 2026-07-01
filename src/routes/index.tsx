@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -15,72 +16,238 @@ export const Route = createFileRoute("/")({
   component: AppEstoque,
 });
 
-const AUTH_KEY = "paggio-auth-v1";
 const EMAIL = "paggio.adm@gmail.com";
 const PASSWORD = "Paggio1404!";
+const LS_KEY = "paggio-estoque-v1";
+const TABLE = "estoque_state";
 
 function AppEstoque() {
-  const [authed, setAuthed] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [status, setStatus] = useState<"idle" | "syncing" | "saved" | "error">("idle");
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const lastSyncedRef = useRef<string>("");
+  const lastServerUpdatedRef = useRef<string>("");
 
+  // Detect existing session
   useEffect(() => {
-    try {
-      setAuthed(localStorage.getItem(AUTH_KEY) === "1");
-    } catch {}
-    setReady(true);
+    supabase.auth.getSession().then(({ data }) => {
+      setUserId(data.session?.user.id ?? null);
+      setReady(true);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      setUserId(session?.user.id ?? null);
+    });
+    return () => sub.subscription.unsubscribe();
   }, []);
 
+  // Initial pull + start sync loop
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+    (async () => {
+      setStatus("syncing");
+      const { data, error } = await supabase
+        .from(TABLE)
+        .select("data, updated_at")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (cancelled) return;
+
+      if (error) {
+        console.error("[sync] pull error", error);
+        setStatus("error");
+      } else if (data && data.data && Object.keys(data.data as object).length > 0) {
+        // Cloud has data → replace local
+        try {
+          localStorage.setItem(LS_KEY, JSON.stringify(data.data));
+          lastSyncedRef.current = JSON.stringify(data.data);
+          lastServerUpdatedRef.current = data.updated_at as string;
+        } catch (e) {
+          console.error(e);
+        }
+        setStatus("saved");
+      } else {
+        // Cloud empty → seed with whatever is in this browser (migração inicial)
+        const local = safeReadLocal();
+        if (local) {
+          const parsed = JSON.parse(local);
+          const { error: upErr } = await supabase
+            .from(TABLE)
+            .upsert({ user_id: userId, data: parsed, updated_at: new Date().toISOString() });
+          if (upErr) {
+            console.error("[sync] seed error", upErr);
+            setStatus("error");
+          } else {
+            lastSyncedRef.current = local;
+            setStatus("saved");
+          }
+        } else {
+          setStatus("saved");
+        }
+      }
+
+      // Poll: push local changes
+      pollTimer = setInterval(async () => {
+        const current = safeReadLocal();
+        if (!current || current === lastSyncedRef.current) return;
+        setStatus("syncing");
+        const parsed = JSON.parse(current);
+        const nowIso = new Date().toISOString();
+        const { error: upErr } = await supabase
+          .from(TABLE)
+          .upsert({ user_id: userId, data: parsed, updated_at: nowIso });
+        if (upErr) {
+          console.error("[sync] push error", upErr);
+          setStatus("error");
+        } else {
+          lastSyncedRef.current = current;
+          lastServerUpdatedRef.current = nowIso;
+          setStatus("saved");
+        }
+      }, 2500);
+    })();
+
+    // Pull on tab focus
+    const onFocus = async () => {
+      if (!userId) return;
+      const { data } = await supabase
+        .from(TABLE)
+        .select("data, updated_at")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (!data) return;
+      if ((data.updated_at as string) > lastServerUpdatedRef.current) {
+        const serialized = JSON.stringify(data.data);
+        if (serialized !== lastSyncedRef.current) {
+          localStorage.setItem(LS_KEY, serialized);
+          lastSyncedRef.current = serialized;
+          lastServerUpdatedRef.current = data.updated_at as string;
+          // Reload iframe so it re-reads localStorage
+          if (iframeRef.current) iframeRef.current.src = "/app.html?t=" + Date.now();
+        }
+      }
+    };
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      cancelled = true;
+      if (pollTimer) clearInterval(pollTimer);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [userId]);
+
   if (!ready) return null;
-  if (!authed) return <Login onSuccess={() => setAuthed(true)} />;
+  if (!userId) return <Login />;
 
   return (
     <div style={{ position: "fixed", inset: 0 }}>
       <iframe
+        ref={iframeRef}
         src="/app.html"
         title="Controle de Estoque · Paggio Gastro Bar"
         style={{ width: "100vw", height: "100vh", border: "none", display: "block" }}
       />
-      <button
-        onClick={() => {
-          try { localStorage.removeItem(AUTH_KEY); } catch {}
-          setAuthed(false);
-        }}
+      <div
         style={{
           position: "fixed",
           bottom: 12,
           right: 12,
-          padding: "8px 14px",
-          background: "#20241F",
-          color: "#F1EEE3",
-          border: "1px solid #BD6A2C",
-          borderRadius: 8,
-          fontFamily: "Inter, system-ui, sans-serif",
-          fontSize: 12,
-          letterSpacing: ".04em",
-          textTransform: "uppercase",
-          cursor: "pointer",
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
           zIndex: 9999,
+          fontFamily: "Inter, system-ui, sans-serif",
         }}
       >
-        Sair
-      </button>
+        <span
+          style={{
+            fontSize: 11,
+            letterSpacing: ".06em",
+            textTransform: "uppercase",
+            color:
+              status === "error"
+                ? "#E38B7A"
+                : status === "syncing"
+                  ? "#D3A574"
+                  : "#8FB37E",
+            background: "rgba(32,36,31,.85)",
+            padding: "5px 10px",
+            borderRadius: 999,
+            border: "1px solid #3a3f37",
+          }}
+        >
+          {status === "syncing" ? "Sincronizando…" : status === "error" ? "Erro sync" : "Sincronizado"}
+        </span>
+        <button
+          onClick={async () => {
+            await supabase.auth.signOut();
+          }}
+          style={{
+            padding: "8px 14px",
+            background: "#20241F",
+            color: "#F1EEE3",
+            border: "1px solid #BD6A2C",
+            borderRadius: 8,
+            fontSize: 12,
+            letterSpacing: ".04em",
+            textTransform: "uppercase",
+            cursor: "pointer",
+          }}
+        >
+          Sair
+        </button>
+      </div>
     </div>
   );
 }
 
-function Login({ onSuccess }: { onSuccess: () => void }) {
-  const [email, setEmail] = useState("");
+function safeReadLocal(): string | null {
+  try {
+    return localStorage.getItem(LS_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function Login() {
+  const [email, setEmail] = useState(EMAIL);
   const [pass, setPass] = useState("");
   const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (email.trim().toLowerCase() === EMAIL && pass === PASSWORD) {
-      try { localStorage.setItem(AUTH_KEY, "1"); } catch {}
-      onSuccess();
-    } else {
-      setErr("E-mail ou senha inválidos.");
+    setErr("");
+    setLoading(true);
+
+    // Only allow the fixed account
+    if (email.trim().toLowerCase() !== EMAIL) {
+      setErr("Usuário não autorizado.");
+      setLoading(false);
+      return;
     }
+
+    let { error } = await supabase.auth.signInWithPassword({ email: EMAIL, password: pass });
+
+    // First-time bootstrap: create the account if it doesn't exist yet
+    if (error && /invalid|credentials/i.test(error.message) && pass === PASSWORD) {
+      const { error: signUpErr } = await supabase.auth.signUp({
+        email: EMAIL,
+        password: PASSWORD,
+      });
+      if (!signUpErr) {
+        const retry = await supabase.auth.signInWithPassword({ email: EMAIL, password: PASSWORD });
+        error = retry.error;
+      } else {
+        error = signUpErr;
+      }
+    }
+
+    if (error) setErr("E-mail ou senha inválidos.");
+    setLoading(false);
   }
 
   return (
@@ -110,18 +277,18 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
         }}
       >
         <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <img src="/logo.ico" alt="Paggio" style={{ width: 56, height: 56, marginBottom: 12, display: "block", marginLeft: "auto", marginRight: "auto" }} />
-          <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: ".02em" }}>
-            Paggio Gastro Bar
-          </div>
+          <img
+            src="/logo.ico"
+            alt="Paggio"
+            style={{ width: 56, height: 56, marginBottom: 12, display: "block", marginLeft: "auto", marginRight: "auto" }}
+          />
+          <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: ".02em" }}>Paggio Gastro Bar</div>
           <div style={{ fontSize: 12, color: "#a8ac9f", marginTop: 4, letterSpacing: ".08em", textTransform: "uppercase" }}>
             Controle de Estoque
           </div>
         </div>
 
-        <label style={{ display: "block", fontSize: 11, textTransform: "uppercase", letterSpacing: ".08em", color: "#a8ac9f", marginBottom: 6 }}>
-          E-mail
-        </label>
+        <label style={labelStyle}>E-mail</label>
         <input
           type="email"
           value={email}
@@ -131,9 +298,7 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
           style={inputStyle}
         />
 
-        <label style={{ display: "block", fontSize: 11, textTransform: "uppercase", letterSpacing: ".08em", color: "#a8ac9f", margin: "16px 0 6px" }}>
-          Senha
-        </label>
+        <label style={{ ...labelStyle, margin: "16px 0 6px" }}>Senha</label>
         <input
           type="password"
           value={pass}
@@ -143,12 +308,11 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
           style={inputStyle}
         />
 
-        {err && (
-          <div style={{ marginTop: 12, color: "#E38B7A", fontSize: 13 }}>{err}</div>
-        )}
+        {err && <div style={{ marginTop: 12, color: "#E38B7A", fontSize: 13 }}>{err}</div>}
 
         <button
           type="submit"
+          disabled={loading}
           style={{
             marginTop: 22,
             width: "100%",
@@ -161,15 +325,25 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
             fontWeight: 600,
             letterSpacing: ".08em",
             textTransform: "uppercase",
-            cursor: "pointer",
+            cursor: loading ? "wait" : "pointer",
+            opacity: loading ? 0.7 : 1,
           }}
         >
-          Entrar
+          {loading ? "Entrando…" : "Entrar"}
         </button>
       </form>
     </div>
   );
 }
+
+const labelStyle: React.CSSProperties = {
+  display: "block",
+  fontSize: 11,
+  textTransform: "uppercase",
+  letterSpacing: ".08em",
+  color: "#a8ac9f",
+  marginBottom: 6,
+};
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
