@@ -110,7 +110,7 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
         }}
       >
         <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <img src="/logo.ico" alt="Paggio" style={{ width: 56, height: 56, marginBottom: 12 }} />
+          <img src="/logo.ico" alt="Paggio" style={{ width: 56, height: 56, marginBottom: 12, display: "block", marginLeft: "auto", marginRight: "auto" }} />
           <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: ".02em" }}>
             Paggio Gastro Bar
           </div>
