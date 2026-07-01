@@ -20,6 +20,9 @@ const EMAIL = "paggio.adm@gmail.com";
 const PASSWORD = "Paggio1404!";
 const LS_KEY = "paggio-estoque-v1";
 const TABLE = "estoque_state";
+// Chave fixa: o estoque é único da Paggio, não depende de qual auth.users
+// fez login (isso é só o "cadeado" de acesso, não o dono dos dados).
+const TENANT_ID = "paggio";
 
 function AppEstoque() {
   const [userId, setUserId] = useState<string | null>(null);
@@ -52,7 +55,7 @@ function AppEstoque() {
       const { data, error } = await supabase
         .from(TABLE)
         .select("data, updated_at")
-        .eq("user_id", userId)
+        .eq("tenant_id", TENANT_ID)
         .maybeSingle();
       if (cancelled) return;
 
@@ -76,7 +79,10 @@ function AppEstoque() {
           const parsed = JSON.parse(local);
           const { error: upErr } = await supabase
             .from(TABLE)
-            .upsert({ user_id: userId, data: parsed, updated_at: new Date().toISOString() });
+            .upsert(
+              { tenant_id: TENANT_ID, data: parsed, updated_at: new Date().toISOString() },
+              { onConflict: "tenant_id" },
+            );
           if (upErr) {
             console.error("[sync] seed error", upErr);
             setStatus("error");
@@ -98,7 +104,7 @@ function AppEstoque() {
         const nowIso = new Date().toISOString();
         const { error: upErr } = await supabase
           .from(TABLE)
-          .upsert({ user_id: userId, data: parsed, updated_at: nowIso });
+          .upsert({ tenant_id: TENANT_ID, data: parsed, updated_at: nowIso }, { onConflict: "tenant_id" });
         if (upErr) {
           console.error("[sync] push error", upErr);
           setStatus("error");
@@ -113,11 +119,7 @@ function AppEstoque() {
     // Pull on tab focus
     const onFocus = async () => {
       if (!userId) return;
-      const { data } = await supabase
-        .from(TABLE)
-        .select("data, updated_at")
-        .eq("user_id", userId)
-        .maybeSingle();
+      const { data } = await supabase.from(TABLE).select("data, updated_at").eq("tenant_id", TENANT_ID).maybeSingle();
       if (!data) return;
       if ((data.updated_at as string) > lastServerUpdatedRef.current) {
         const serialized = JSON.stringify(data.data);
@@ -167,12 +169,7 @@ function AppEstoque() {
             fontSize: 11,
             letterSpacing: ".06em",
             textTransform: "uppercase",
-            color:
-              status === "error"
-                ? "#E38B7A"
-                : status === "syncing"
-                  ? "#D3A574"
-                  : "#8FB37E",
+            color: status === "error" ? "#E38B7A" : status === "syncing" ? "#D3A574" : "#8FB37E",
             background: "rgba(32,36,31,.85)",
             padding: "5px 10px",
             borderRadius: 999,
@@ -280,10 +277,19 @@ function Login() {
           <img
             src="/logo.ico"
             alt="Paggio"
-            style={{ width: 56, height: 56, marginBottom: 12, display: "block", marginLeft: "auto", marginRight: "auto" }}
+            style={{
+              width: 56,
+              height: 56,
+              marginBottom: 12,
+              display: "block",
+              marginLeft: "auto",
+              marginRight: "auto",
+            }}
           />
           <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: ".02em" }}>Paggio Gastro Bar</div>
-          <div style={{ fontSize: 12, color: "#a8ac9f", marginTop: 4, letterSpacing: ".08em", textTransform: "uppercase" }}>
+          <div
+            style={{ fontSize: 12, color: "#a8ac9f", marginTop: 4, letterSpacing: ".08em", textTransform: "uppercase" }}
+          >
             Controle de Estoque
           </div>
         </div>
