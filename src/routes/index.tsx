@@ -139,32 +139,6 @@ function AppEstoque() {
     };
   }, [userId]);
 
-  async function limparTudo() {
-    const ok = window.confirm(
-      "Isso vai apagar TODOS os dados (materiais, movimentos, compras, conferências, vendas) na nuvem e neste dispositivo. Continuar?",
-    );
-    if (!ok) return;
-    setStatus("syncing");
-    try {
-      localStorage.removeItem(LS_KEY);
-    } catch {
-      // ignore
-    }
-    const nowIso = new Date().toISOString();
-    const { error } = await supabase
-      .from(TABLE)
-      .upsert({ tenant_id: TENANT_ID, data: {}, updated_at: nowIso }, { onConflict: "tenant_id" });
-    if (error) {
-      console.error(error);
-      setStatus("error");
-      return;
-    }
-    lastSyncedRef.current = "{}";
-    lastServerUpdatedRef.current = nowIso;
-    setStatus("saved");
-    if (iframeRef.current) iframeRef.current.src = "/app.html?t=" + Date.now();
-  }
-
   if (!ready) return null;
   if (!userId) return <Login />;
 
@@ -202,22 +176,6 @@ function AppEstoque() {
         >
           {status === "syncing" ? "Sincronizando…" : status === "error" ? "Erro sync" : "Sincronizado"}
         </span>
-        <button
-          onClick={limparTudo}
-          style={{
-            padding: "8px 14px",
-            background: "#20241F",
-            color: "#F1EEE3",
-            border: "1px solid #A23B2E",
-            borderRadius: 8,
-            fontSize: 12,
-            letterSpacing: ".04em",
-            textTransform: "uppercase",
-            cursor: "pointer",
-          }}
-        >
-          Limpar tudo
-        </button>
         <button
           onClick={async () => {
             await supabase.auth.signOut();
