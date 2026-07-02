@@ -91,16 +91,16 @@ function AppEstoque() {
         const current = safeReadLocal();
         if (current === null || current === lastSyncedRef.current) return;
         setStatus("syncing");
-        let parsed: Record<string, unknown>;
+        let parsed: unknown;
         try {
-          parsed = JSON.parse(current) as Record<string, unknown>;
+          parsed = JSON.parse(current);
         } catch {
           return;
         }
         const nowIso = new Date().toISOString();
         const { error: upErr } = await supabase
           .from(TABLE)
-          .upsert({ tenant_id: TENANT_ID, data: parsed, updated_at: nowIso }, { onConflict: "tenant_id" });
+          .upsert({ tenant_id: TENANT_ID, data: parsed as never, updated_at: nowIso }, { onConflict: "tenant_id" });
         if (upErr) {
           console.error("[sync] push error", upErr);
           setStatus("error");
