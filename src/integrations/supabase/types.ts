@@ -17,18 +17,21 @@ export type Database = {
       estoque_state: {
         Row: {
           data: Json
+          tenant_id: string
           updated_at: string
-          user_id: string
+          user_id: string | null
         }
         Insert: {
           data?: Json
+          tenant_id?: string
           updated_at?: string
-          user_id: string
+          user_id?: string | null
         }
         Update: {
           data?: Json
+          tenant_id?: string
           updated_at?: string
-          user_id?: string
+          user_id?: string | null
         }
         Relationships: []
       }
