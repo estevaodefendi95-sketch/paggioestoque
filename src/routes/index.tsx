@@ -91,9 +91,9 @@ function AppEstoque() {
         const current = safeReadLocal();
         if (current === null || current === lastSyncedRef.current) return;
         setStatus("syncing");
-        let parsed: unknown;
+        let parsed: Record<string, unknown>;
         try {
-          parsed = JSON.parse(current);
+          parsed = JSON.parse(current) as Record<string, unknown>;
         } catch {
           return;
         }
