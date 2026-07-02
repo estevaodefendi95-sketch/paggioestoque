@@ -31,6 +31,14 @@ function AppEstoque() {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const lastSyncedRef = useRef<string>("");
   const lastServerUpdatedRef = useRef<string>("");
+  const iframeAuthReadyRef = useRef(false);
+
+  function sendTokenToIframe(accessToken: string, refreshToken: string) {
+    iframeRef.current?.contentWindow?.postMessage(
+      { type: "PAGGIO_AUTH_TOKEN", access_token: accessToken, refresh_token: refreshToken },
+      window.location.origin,
+    );
+  }
 
   // Detect existing session
   useEffect(() => {
@@ -40,6 +48,11 @@ function AppEstoque() {
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
       setUserId(session?.user.id ?? null);
+      // Sessão renovada (ex.: token expirou depois de ~1h) — repassa pro iframe
+      // pra ele não parar de sincronizar no meio do expediente.
+      if (session && iframeAuthReadyRef.current) {
+        sendTokenToIframe(session.access_token, session.refresh_token);
+      }
     });
     return () => sub.subscription.unsubscribe();
   }, []);
@@ -174,6 +187,23 @@ function AppEstoque() {
     return () => {
       supabase.removeChannel(channel);
     };
+  }, [userId]);
+
+  // Handshake de login com o iframe: quando o app.html avisa que está pronto,
+  // mandamos o token da sessão atual pra ele poder falar com o Supabase também.
+  useEffect(() => {
+    if (!userId) return;
+    const onMessage = async (ev: MessageEvent) => {
+      if (ev.origin !== window.location.origin) return;
+      if (!ev.data || ev.data.type !== "PAGGIO_ESTOQUE_READY") return;
+      const { data } = await supabase.auth.getSession();
+      const session = data.session;
+      if (!session) return;
+      sendTokenToIframe(session.access_token, session.refresh_token);
+      iframeAuthReadyRef.current = true;
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
   }, [userId]);
 
   if (!ready) return null;
