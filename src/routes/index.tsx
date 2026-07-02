@@ -20,8 +20,6 @@ const EMAIL = "paggio.adm@gmail.com";
 const PASSWORD = "Paggio1404!";
 const LS_KEY = "paggio-estoque-v1";
 const TABLE = "estoque_state";
-// Chave fixa: o estoque é único da Paggio, não depende de qual auth.users
-// fez login (isso é só o "cadeado" de acesso, não o dono dos dados).
 const TENANT_ID = "paggio";
 
 function AppEstoque() {
@@ -29,10 +27,10 @@ function AppEstoque() {
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState<"idle" | "syncing" | "saved" | "error">("idle");
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const initialPullDoneRef = useRef(false);
   const lastSyncedRef = useRef<string>("");
   const lastServerUpdatedRef = useRef<string>("");
 
-  // Detect existing session
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setUserId(data.session?.user.id ?? null);
@@ -44,11 +42,15 @@ function AppEstoque() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  // Initial pull + start sync loop
   useEffect(() => {
     if (!userId) return;
     let cancelled = false;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
+    initialPullDoneRef.current = false;
+
+    const reloadIframe = () => {
+      if (iframeRef.current) iframeRef.current.src = "/app.html?t=" + Date.now();
+    };
 
     (async () => {
       setStatus("syncing");
@@ -62,45 +64,39 @@ function AppEstoque() {
       if (error) {
         console.error("[sync] pull error", error);
         setStatus("error");
-      } else if (data && data.data && Object.keys(data.data as object).length > 0) {
-        // Cloud has data → replace local
+        return;
+      }
+
+      // Nuvem é SEMPRE a fonte da verdade. Se vier vazio, o app abre vazio.
+      const cloudData = (data?.data ?? {}) as object;
+      const serialized = JSON.stringify(cloudData);
+      const localCurrent = safeReadLocal();
+      if (localCurrent !== serialized) {
         try {
-          localStorage.setItem(LS_KEY, JSON.stringify(data.data));
-          lastSyncedRef.current = JSON.stringify(data.data);
-          lastServerUpdatedRef.current = data.updated_at as string;
+          localStorage.setItem(LS_KEY, serialized);
         } catch (e) {
           console.error(e);
         }
-        setStatus("saved");
-      } else {
-        // Cloud empty → seed with whatever is in this browser (migração inicial)
-        const local = safeReadLocal();
-        if (local) {
-          const parsed = JSON.parse(local);
-          const { error: upErr } = await supabase
-            .from(TABLE)
-            .upsert(
-              { tenant_id: TENANT_ID, data: parsed, updated_at: new Date().toISOString() },
-              { onConflict: "tenant_id" },
-            );
-          if (upErr) {
-            console.error("[sync] seed error", upErr);
-            setStatus("error");
-          } else {
-            lastSyncedRef.current = local;
-            setStatus("saved");
-          }
-        } else {
-          setStatus("saved");
-        }
+        // Recarrega o iframe pra ele reler a localStorage já corrigida
+        reloadIframe();
       }
+      lastSyncedRef.current = serialized;
+      lastServerUpdatedRef.current = (data?.updated_at as string) ?? "";
+      initialPullDoneRef.current = true;
+      setStatus("saved");
 
-      // Poll: push local changes
+      // Push loop — só sobe alterações locais reais depois do pull inicial
       pollTimer = setInterval(async () => {
+        if (!initialPullDoneRef.current) return;
         const current = safeReadLocal();
-        if (!current || current === lastSyncedRef.current) return;
+        if (current === null || current === lastSyncedRef.current) return;
         setStatus("syncing");
-        const parsed = JSON.parse(current);
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(current);
+        } catch {
+          return;
+        }
         const nowIso = new Date().toISOString();
         const { error: upErr } = await supabase
           .from(TABLE)
@@ -116,19 +112,21 @@ function AppEstoque() {
       }, 2500);
     })();
 
-    // Pull on tab focus
     const onFocus = async () => {
-      if (!userId) return;
-      const { data } = await supabase.from(TABLE).select("data, updated_at").eq("tenant_id", TENANT_ID).maybeSingle();
+      if (!userId || !initialPullDoneRef.current) return;
+      const { data } = await supabase
+        .from(TABLE)
+        .select("data, updated_at")
+        .eq("tenant_id", TENANT_ID)
+        .maybeSingle();
       if (!data) return;
       if ((data.updated_at as string) > lastServerUpdatedRef.current) {
-        const serialized = JSON.stringify(data.data);
+        const serialized = JSON.stringify(data.data ?? {});
         if (serialized !== lastSyncedRef.current) {
           localStorage.setItem(LS_KEY, serialized);
           lastSyncedRef.current = serialized;
           lastServerUpdatedRef.current = data.updated_at as string;
-          // Reload iframe so it re-reads localStorage
-          if (iframeRef.current) iframeRef.current.src = "/app.html?t=" + Date.now();
+          reloadIframe();
         }
       }
     };
@@ -140,6 +138,32 @@ function AppEstoque() {
       window.removeEventListener("focus", onFocus);
     };
   }, [userId]);
+
+  async function limparTudo() {
+    const ok = window.confirm(
+      "Isso vai apagar TODOS os dados (materiais, movimentos, compras, conferências, vendas) na nuvem e neste dispositivo. Continuar?",
+    );
+    if (!ok) return;
+    setStatus("syncing");
+    try {
+      localStorage.removeItem(LS_KEY);
+    } catch {
+      // ignore
+    }
+    const nowIso = new Date().toISOString();
+    const { error } = await supabase
+      .from(TABLE)
+      .upsert({ tenant_id: TENANT_ID, data: {}, updated_at: nowIso }, { onConflict: "tenant_id" });
+    if (error) {
+      console.error(error);
+      setStatus("error");
+      return;
+    }
+    lastSyncedRef.current = "{}";
+    lastServerUpdatedRef.current = nowIso;
+    setStatus("saved");
+    if (iframeRef.current) iframeRef.current.src = "/app.html?t=" + Date.now();
+  }
 
   if (!ready) return null;
   if (!userId) return <Login />;
@@ -178,6 +202,22 @@ function AppEstoque() {
         >
           {status === "syncing" ? "Sincronizando…" : status === "error" ? "Erro sync" : "Sincronizado"}
         </span>
+        <button
+          onClick={limparTudo}
+          style={{
+            padding: "8px 14px",
+            background: "#20241F",
+            color: "#F1EEE3",
+            border: "1px solid #A23B2E",
+            borderRadius: 8,
+            fontSize: 12,
+            letterSpacing: ".04em",
+            textTransform: "uppercase",
+            cursor: "pointer",
+          }}
+        >
+          Limpar tudo
+        </button>
         <button
           onClick={async () => {
             await supabase.auth.signOut();
@@ -220,7 +260,6 @@ function Login() {
     setErr("");
     setLoading(true);
 
-    // Only allow the fixed account
     if (email.trim().toLowerCase() !== EMAIL) {
       setErr("Usuário não autorizado.");
       setLoading(false);
@@ -229,7 +268,6 @@ function Login() {
 
     let { error } = await supabase.auth.signInWithPassword({ email: EMAIL, password: pass });
 
-    // First-time bootstrap: create the account if it doesn't exist yet
     if (error && /invalid|credentials/i.test(error.message) && pass === PASSWORD) {
       const { error: signUpErr } = await supabase.auth.signUp({
         email: EMAIL,
