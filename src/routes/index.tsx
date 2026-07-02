@@ -20,6 +20,8 @@ const EMAIL = "paggio.adm@gmail.com";
 const PASSWORD = "Paggio1404!";
 const LS_KEY = "paggio-estoque-v1";
 const TABLE = "estoque_state";
+// Chave fixa: o estoque é único da Paggio, não depende de qual auth.users
+// fez login (isso é só o "cadeado" de acesso, não o dono dos dados).
 const TENANT_ID = "paggio";
 
 function AppEstoque() {
@@ -27,10 +29,10 @@ function AppEstoque() {
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState<"idle" | "syncing" | "saved" | "error">("idle");
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const initialPullDoneRef = useRef(false);
   const lastSyncedRef = useRef<string>("");
   const lastServerUpdatedRef = useRef<string>("");
 
+  // Detect existing session
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setUserId(data.session?.user.id ?? null);
@@ -42,15 +44,11 @@ function AppEstoque() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
+  // Initial pull + start sync loop
   useEffect(() => {
     if (!userId) return;
     let cancelled = false;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
-    initialPullDoneRef.current = false;
-
-    const reloadIframe = () => {
-      if (iframeRef.current) iframeRef.current.src = "/app.html?t=" + Date.now();
-    };
 
     (async () => {
       setStatus("syncing");
@@ -64,43 +62,53 @@ function AppEstoque() {
       if (error) {
         console.error("[sync] pull error", error);
         setStatus("error");
-        return;
-      }
-
-      // Nuvem é SEMPRE a fonte da verdade. Se vier vazio, o app abre vazio.
-      const cloudData = (data?.data ?? {}) as object;
-      const serialized = JSON.stringify(cloudData);
-      const localCurrent = safeReadLocal();
-      if (localCurrent !== serialized) {
+      } else if (data) {
+        // A linha compartilhada já existe na nuvem — ela é sempre a verdade,
+        // mesmo que esteja vazia (ex.: depois de uma limpeza intencional).
+        // Nunca sobrescrevemos a nuvem com sobra de localStorage nesse caso.
         try {
+          const serialized = JSON.stringify(data.data ?? {});
           localStorage.setItem(LS_KEY, serialized);
+          lastSyncedRef.current = serialized;
+          lastServerUpdatedRef.current = data.updated_at as string;
         } catch (e) {
           console.error(e);
         }
-        // Recarrega o iframe pra ele reler a localStorage já corrigida
-        reloadIframe();
-      }
-      lastSyncedRef.current = serialized;
-      lastServerUpdatedRef.current = (data?.updated_at as string) ?? "";
-      initialPullDoneRef.current = true;
-      setStatus("saved");
-
-      // Push loop — só sobe alterações locais reais depois do pull inicial
-      pollTimer = setInterval(async () => {
-        if (!initialPullDoneRef.current) return;
-        const current = safeReadLocal();
-        if (current === null || current === lastSyncedRef.current) return;
-        setStatus("syncing");
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(current);
-        } catch {
-          return;
+        setStatus("saved");
+      } else {
+        // A linha nunca existiu (primeiríssimo uso do sistema) → migra o
+        // que tiver neste navegador como ponto de partida único.
+        const local = safeReadLocal();
+        if (local) {
+          const parsed = JSON.parse(local);
+          const { error: upErr } = await supabase
+            .from(TABLE)
+            .upsert(
+              { tenant_id: TENANT_ID, data: parsed, updated_at: new Date().toISOString() },
+              { onConflict: "tenant_id" },
+            );
+          if (upErr) {
+            console.error("[sync] seed error", upErr);
+            setStatus("error");
+          } else {
+            lastSyncedRef.current = local;
+            setStatus("saved");
+          }
+        } else {
+          setStatus("saved");
         }
+      }
+
+      // Poll: push local changes
+      pollTimer = setInterval(async () => {
+        const current = safeReadLocal();
+        if (!current || current === lastSyncedRef.current) return;
+        setStatus("syncing");
+        const parsed = JSON.parse(current);
         const nowIso = new Date().toISOString();
         const { error: upErr } = await supabase
           .from(TABLE)
-          .upsert({ tenant_id: TENANT_ID, data: parsed as never, updated_at: nowIso }, { onConflict: "tenant_id" });
+          .upsert({ tenant_id: TENANT_ID, data: parsed, updated_at: nowIso }, { onConflict: "tenant_id" });
         if (upErr) {
           console.error("[sync] push error", upErr);
           setStatus("error");
@@ -112,21 +120,19 @@ function AppEstoque() {
       }, 2500);
     })();
 
+    // Pull on tab focus
     const onFocus = async () => {
-      if (!userId || !initialPullDoneRef.current) return;
-      const { data } = await supabase
-        .from(TABLE)
-        .select("data, updated_at")
-        .eq("tenant_id", TENANT_ID)
-        .maybeSingle();
+      if (!userId) return;
+      const { data } = await supabase.from(TABLE).select("data, updated_at").eq("tenant_id", TENANT_ID).maybeSingle();
       if (!data) return;
       if ((data.updated_at as string) > lastServerUpdatedRef.current) {
-        const serialized = JSON.stringify(data.data ?? {});
+        const serialized = JSON.stringify(data.data);
         if (serialized !== lastSyncedRef.current) {
           localStorage.setItem(LS_KEY, serialized);
           lastSyncedRef.current = serialized;
           lastServerUpdatedRef.current = data.updated_at as string;
-          reloadIframe();
+          // Reload iframe so it re-reads localStorage
+          if (iframeRef.current) iframeRef.current.src = "/app.html?t=" + Date.now();
         }
       }
     };
@@ -136,6 +142,37 @@ function AppEstoque() {
       cancelled = true;
       if (pollTimer) clearInterval(pollTimer);
       window.removeEventListener("focus", onFocus);
+    };
+  }, [userId]);
+
+  // Realtime: qualquer alteração salva por QUALQUER sessão aparece na hora
+  // aqui, sem depender de trocar de aba/foco.
+  useEffect(() => {
+    if (!userId) return;
+    const channel = supabase
+      .channel("estoque_state_realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: TABLE, filter: `tenant_id=eq.${TENANT_ID}` },
+        (payload) => {
+          const newRow = payload.new as { data?: unknown; updated_at?: string } | undefined;
+          if (!newRow || newRow.updated_at === undefined) return;
+          const serialized = JSON.stringify(newRow.data ?? {});
+          if (serialized === lastSyncedRef.current) return;
+          try {
+            localStorage.setItem(LS_KEY, serialized);
+            lastSyncedRef.current = serialized;
+            lastServerUpdatedRef.current = newRow.updated_at as string;
+            if (iframeRef.current) iframeRef.current.src = "/app.html?t=" + Date.now();
+          } catch (e) {
+            console.error("[realtime] apply error", e);
+          }
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
     };
   }, [userId]);
 
@@ -218,6 +255,7 @@ function Login() {
     setErr("");
     setLoading(true);
 
+    // Only allow the fixed account
     if (email.trim().toLowerCase() !== EMAIL) {
       setErr("Usuário não autorizado.");
       setLoading(false);
@@ -226,6 +264,7 @@ function Login() {
 
     let { error } = await supabase.auth.signInWithPassword({ email: EMAIL, password: pass });
 
+    // First-time bootstrap: create the account if it doesn't exist yet
     if (error && /invalid|credentials/i.test(error.message) && pass === PASSWORD) {
       const { error: signUpErr } = await supabase.auth.signUp({
         email: EMAIL,
