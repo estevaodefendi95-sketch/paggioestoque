@@ -1387,7 +1387,7 @@
             const s = statusOf(p);
             return `<tr data-codigo="${p.codigo}">
               <td class="mono">${p.codigo}</td>
-              <td><input class="edit-descricao" data-codigo="${p.codigo}" value="${p.descricao}" style="border:none;background:none;width:100%;font-weight:500;"></td>
+              <td><input class="edit-descricao" data-codigo="${p.codigo}" value="${p.descricao}" title="Clique para editar o nome"></td>
               <td><input class="edit-unidade" data-codigo="${p.codigo}" value="${p.unidade}" style="border:none;background:none;width:48px;"></td>
               <td class="num mono">${p.estoqueAtual}</td>
               <td class="num"><input class="edit-minimo" data-codigo="${p.codigo}" type="number" min="0" value="${p.estoqueMinimo}" style="border:1px solid var(--line);border-radius:5px;width:64px;padding:3px 6px;text-align:right;"></td>
