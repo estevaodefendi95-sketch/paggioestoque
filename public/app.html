@@ -266,6 +266,14 @@
       .print-header h2{font-size:18px;margin:0 0 4px;}
       .print-header p{font-size:12px;color:#666;margin:0;}
 
+      .edit-descricao{
+        border:1px solid transparent;border-radius:6px;background:transparent;
+        width:100%;font-weight:500;padding:5px 8px;font-family:inherit;font-size:inherit;
+        color:inherit;transition:border-color .15s,background .15s;
+      }
+      .edit-descricao:hover{border-color:var(--line);background:#fafaf7;}
+      .edit-descricao:focus{outline:none;border-color:var(--copper);background:#fff;box-shadow:0 0 0 3px rgba(189,106,44,0.12);}
+
       [hidden]{display:none !important;}
 
       @media (max-width:760px){
