@@ -1,31 +1,36 @@
-## Diagnóstico
+## O que muda
 
-A nuvem já está zerada (`data = {}`). O problema é a **lógica de sincronização** em `src/routes/index.tsx`:
+### 1. Editar nome do material (aba Materiais)
+Hoje o nome do produto já aceita edição, mas o campo é invisível (sem borda, sem fundo), então parece só um texto e ninguém percebe que dá pra alterar. Vou:
 
-- Quando a nuvem está vazia, o app **envia a localStorage do navegador atual pra nuvem** ("seed"). Foi isso que fez os 26 itens antigos voltarem depois da minha limpeza — o navegador ainda tinha o cadastro salvo localmente e re-subiu.
-- Além disso, quando o pull inicial baixa dados da nuvem e reescreve a localStorage, o iframe (`/app.html`) já foi carregado e continua mostrando o que estava em memória. Só recarrega ao trocar de aba.
-- Efeito prático: cada navegador vira dono da própria versão até alguém sobrescrever, e mudanças "não aparecem" entre logins.
+- Deixar o campo do nome com aparência de campo editável (borda sutil que aparece ao passar o mouse / ao focar, fundo levemente destacado).
+- Salvar automaticamente ao sair do campo (Tab / clique fora / Enter), como já acontece com os outros campos da linha.
+- Mostrar um aviso rápido "Nome de … atualizado" para confirmar que salvou na nuvem.
+- Atualizar imediatamente os lugares que mostram o nome do material (selects de compra, entrada, saída, perda, conferência, vendas, histórico) para refletir o novo nome sem precisar recarregar.
 
-Sobre o login: o sistema **não usa Google OAuth** — é só e-mail e senha (`paggio.adm@gmail.com` / `Paggio1404!`). Qual conta Google do navegador estava logada não influencia. O que muda entre navegadores é só a localStorage local, e é isso que estamos corrigindo.
+O código do material continua fixo (não muda); só o nome exibido é editado.
 
-## O que vou fazer
+### 2. Menu mobile mais claro
+Hoje, em telas estreitas, o menu vira uma faixa única horizontal com Bar/Limpeza/Cozinha misturados com Dashboard/Materiais/Compras/etc, tudo apertado e com rolagem horizontal confusa. Vou reorganizar em duas linhas fixas no topo:
 
-**1. Reescrever a lógica de sincronização (`src/routes/index.tsx`)**
+```
+┌─────────────────────────────────────────────┐
+│  [ Bar ] [ Limpeza ] [ Cozinha ]            │  ← módulo (linha 1)
+├─────────────────────────────────────────────┤
+│  ▸ Painel  Materiais  Compras  …   →        │  ← seções (linha 2, rola se precisar)
+└─────────────────────────────────────────────┘
+```
 
-- Remover o "seed a partir da localStorage". A nuvem passa a ser **sempre** a fonte da verdade.
-- No pull inicial: sobrescrever a localStorage com o que a nuvem tem (inclusive `{}`) e **recarregar o iframe** logo em seguida, pra tela refletir o estado real.
-- No loop de push: só sobe pra nuvem depois que o pull inicial terminou (evita a corrida atual em que o iframe empurra dados antigos antes do pull chegar).
-- Pull no `focus` continua igual, mas também recarrega o iframe quando detecta mudança.
+- Linha 1: os três módulos ocupando toda a largura, iguais, bem visíveis (mantendo as cores atuais de cada módulo quando ativo).
+- Linha 2: as abas do sistema (Painel, Materiais, Compras, Entradas, Saídas, Perdas, Conferência, Vendas, Histórico) como pílulas de tamanho consistente, com rolagem horizontal suave só se não couberem; a aba ativa fica destacada em cobre.
+- Ícones das abas ficam ocultos no mobile (só o texto) para caber melhor.
+- Rodapé da sidebar (indicador de sincronização e botão "Apagar todos os dados") continua escondido no mobile, como hoje — o botão "Sair" e o status de sincronização já ficam no canto inferior direito da tela.
 
-**2. Adicionar botão "Limpar tudo" no rodapé (ao lado de "Sair")**
+Nada muda em tablets/desktop — só ajustes na faixa `@media (max-width:760px)`.
 
-- Pede confirmação, apaga a localStorage local, zera o registro na nuvem (`data = {}`) e recarrega o iframe.
-- Útil pra qualquer manutenção futura sem precisar me chamar.
+## Escopo técnico
 
-**3. Zerar de novo o registro atual na nuvem** (defensivo — a lógica antiga pode ter re-subido dados enquanto a página estava aberta).
-
-## Efeito
-
-- Depois dessa mudança, ao recarregar em qualquer dispositivo, o sistema abre **vazio de verdade**.
-- Qualquer cadastro ou movimentação feita em um dispositivo aparece nos outros em ~2,5 s (ou ao voltar pra aba).
-- Se algum dia quiser zerar tudo de novo, é só clicar em "Limpar tudo".
+- Arquivo único afetado: `public/app.html`.
+  - CSS: ajuste do bloco `@media (max-width:760px)` e um estado visual novo para `.edit-descricao`.
+  - JS: pequeno acréscimo no handler de `.edit-descricao` para exibir toast e atualizar selects/tabelas dependentes (chamar `renderComprasSelects`, `renderNav`, etc. equivalentes já existentes) após salvar.
+- Sem mudanças de dados, banco, políticas ou fluxo de login.
