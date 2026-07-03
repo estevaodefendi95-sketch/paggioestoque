@@ -119,15 +119,21 @@ function AppEstoque() {
         setStatus("syncing");
         const parsed = JSON.parse(current);
         const nowIso = new Date().toISOString();
+        // Marca como sincronizado ANTES do upsert pra que o eco do Realtime
+        // (que chega quase junto) não pense que é uma mudança externa e
+        // recarregue o iframe no meio da edição do usuário.
+        const previousSynced = lastSyncedRef.current;
+        lastSyncedRef.current = current;
         const { error: upErr } = await supabase
           .from(TABLE)
           .upsert({ tenant_id: TENANT_ID, data: parsed, updated_at: nowIso }, { onConflict: "tenant_id" });
         if (upErr) {
           console.error("[sync] push error", upErr);
+          lastSyncedRef.current = previousSynced;
           setStatus("error");
         } else {
-          lastSyncedRef.current = current;
           lastServerUpdatedRef.current = nowIso;
+
           setStatus("saved");
         }
       }, 2500);
