@@ -1,36 +1,21 @@
+## Problema
+
+Ao editar o nome de um material (ou qualquer campo), a tela às vezes "pisca" / rola pro topo / perde o foco do campo — parece que a página inteira recarrega. Isso acontece porque o iframe do app é recarregado (`iframeRef.current.src = "/app.html?t=..."`) quando o Realtime devolve a mudança que a própria aba acabou de enviar.
+
+Causa: existe uma corrida entre o loop de sync (que envia o novo estado pro banco) e o Realtime (que recebe a notificação de volta). Enquanto o `upsert` ainda não terminou, `lastSyncedRef` ainda guarda o estado antigo, então o payload do Realtime parece "novo" e dispara o reload do iframe — mesmo sendo o eco da própria alteração local.
+
 ## O que muda
 
-### 1. Editar nome do material (aba Materiais)
-Hoje o nome do produto já aceita edição, mas o campo é invisível (sem borda, sem fundo), então parece só um texto e ninguém percebe que dá pra alterar. Vou:
+Ajustar `src/routes/index.tsx` para que o eco do Realtime da própria aba nunca recarregue o iframe:
 
-- Deixar o campo do nome com aparência de campo editável (borda sutil que aparece ao passar o mouse / ao focar, fundo levemente destacado).
-- Salvar automaticamente ao sair do campo (Tab / clique fora / Enter), como já acontece com os outros campos da linha.
-- Mostrar um aviso rápido "Nome de … atualizado" para confirmar que salvou na nuvem.
-- Atualizar imediatamente os lugares que mostram o nome do material (selects de compra, entrada, saída, perda, conferência, vendas, histórico) para refletir o novo nome sem precisar recarregar.
+1. No loop de push (poll de 2,5s), gravar `lastSyncedRef.current = current` **antes** de chamar o `upsert`, não depois. Assim, quando o Realtime devolver o mesmo JSON, a comparação `serialized === lastSyncedRef.current` já bate e o handler sai cedo, sem tocar no iframe.
+2. Em caso de erro no `upsert`, reverter `lastSyncedRef` pro valor anterior (pra não perder a próxima tentativa de sync).
+3. Mesmo cuidado no seed inicial (primeiro upsert quando a linha ainda não existia).
 
-O código do material continua fixo (não muda); só o nome exibido é editado.
+Nenhuma mudança em `public/app.html`, no fluxo de edição, nas políticas do banco ou no login. Só corrige o motivo do reload.
 
-### 2. Menu mobile mais claro
-Hoje, em telas estreitas, o menu vira uma faixa única horizontal com Bar/Limpeza/Cozinha misturados com Dashboard/Materiais/Compras/etc, tudo apertado e com rolagem horizontal confusa. Vou reorganizar em duas linhas fixas no topo:
+## Resultado esperado
 
-```
-┌─────────────────────────────────────────────┐
-│  [ Bar ] [ Limpeza ] [ Cozinha ]            │  ← módulo (linha 1)
-├─────────────────────────────────────────────┤
-│  ▸ Painel  Materiais  Compras  …   →        │  ← seções (linha 2, rola se precisar)
-└─────────────────────────────────────────────┘
-```
-
-- Linha 1: os três módulos ocupando toda a largura, iguais, bem visíveis (mantendo as cores atuais de cada módulo quando ativo).
-- Linha 2: as abas do sistema (Painel, Materiais, Compras, Entradas, Saídas, Perdas, Conferência, Vendas, Histórico) como pílulas de tamanho consistente, com rolagem horizontal suave só se não couberem; a aba ativa fica destacada em cobre.
-- Ícones das abas ficam ocultos no mobile (só o texto) para caber melhor.
-- Rodapé da sidebar (indicador de sincronização e botão "Apagar todos os dados") continua escondido no mobile, como hoje — o botão "Sair" e o status de sincronização já ficam no canto inferior direito da tela.
-
-Nada muda em tablets/desktop — só ajustes na faixa `@media (max-width:760px)`.
-
-## Escopo técnico
-
-- Arquivo único afetado: `public/app.html`.
-  - CSS: ajuste do bloco `@media (max-width:760px)` e um estado visual novo para `.edit-descricao`.
-  - JS: pequeno acréscimo no handler de `.edit-descricao` para exibir toast e atualizar selects/tabelas dependentes (chamar `renderComprasSelects`, `renderNav`, etc. equivalentes já existentes) após salvar.
-- Sem mudanças de dados, banco, políticas ou fluxo de login.
+- Editar nome / mínimo / valor de compra / unidade de um material salva na nuvem normalmente, mas a tela não recarrega mais.
+- O usuário pode continuar editando o próximo campo sem perder posição de rolagem nem foco.
+- Alterações feitas por **outra** aba/dispositivo continuam chegando via Realtime e atualizando a tela como hoje.
