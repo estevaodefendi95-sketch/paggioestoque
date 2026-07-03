@@ -270,10 +270,34 @@
 
       @media (max-width:760px){
         #app{flex-direction:column;}
-        .sidebar{width:100%;flex:none;flex-direction:row;overflow-x:auto;padding:12px;align-items:center;}
+        .sidebar{
+          width:100%;flex:none;flex-direction:column;
+          padding:10px 10px 8px;gap:8px;align-items:stretch;
+          border-bottom:1px solid rgba(241,238,227,0.12);
+        }
         .brand{display:none;}
-        .nav{flex-direction:row;padding:0;}
         .sidebar-foot{display:none;}
+        .mod-switcher{
+          padding:0;margin:0;border-bottom:none;gap:6px;
+        }
+        .mod-btn{padding:8px 4px;font-size:12px;}
+        .nav{
+          flex-direction:row;padding:0;gap:6px;
+          overflow-x:auto;-webkit-overflow-scrolling:touch;
+          scrollbar-width:none;
+        }
+        .nav::-webkit-scrollbar{display:none;}
+        .nav button{
+          flex:0 0 auto;padding:8px 14px;font-size:12.5px;
+          border-radius:999px;background:rgba(241,238,227,0.06);
+          border:1px solid rgba(241,238,227,0.12);
+          white-space:nowrap;
+        }
+        .nav button svg{display:none;}
+        .nav button.active{
+          background:var(--copper);border-color:var(--copper);color:var(--white);
+        }
+        .nav .badge{margin-left:6px;}
         .content{padding:20px 16px 50px;}
         .ticket .desc{font-size:12.5px;}
       }
