@@ -1438,10 +1438,20 @@
           });
         });
         body.querySelectorAll('.edit-descricao').forEach(inp=>{
+          inp.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); inp.blur(); } });
           inp.addEventListener('change', async ()=>{
             const p = findProduct(inp.dataset.codigo);
-            p.descricao = inp.value.trim() || p.descricao;
+            const novo = inp.value.trim();
+            if(!novo || novo === p.descricao){ inp.value = p.descricao; return; }
+            const antigo = p.descricao;
+            p.descricao = novo;
             await saveProducts();
+            ['compraMaterial','entradaMaterial','saidaMaterial','perdaMaterial','vendaManualMaterial'].forEach(id=>{
+              const sel = document.getElementById(id);
+              if(sel) fillMaterialSelect(sel);
+            });
+            renderNav();
+            showToast('Nome atualizado: "'+antigo+'" → "'+novo+'".');
           });
         });
         body.querySelectorAll('.edit-unidade').forEach(inp=>{
