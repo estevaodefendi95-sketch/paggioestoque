@@ -94,6 +94,9 @@ function AppEstoque() {
         const local = safeReadLocal();
         if (local) {
           const parsed = JSON.parse(local);
+          // Marca como sincronizado antes do upsert pra evitar reload do
+          // iframe quando o Realtime devolver o eco.
+          lastSyncedRef.current = local;
           const { error: upErr } = await supabase
             .from(TABLE)
             .upsert(
@@ -102,11 +105,12 @@ function AppEstoque() {
             );
           if (upErr) {
             console.error("[sync] seed error", upErr);
+            lastSyncedRef.current = "";
             setStatus("error");
           } else {
-            lastSyncedRef.current = local;
             setStatus("saved");
           }
+
         } else {
           setStatus("saved");
         }
