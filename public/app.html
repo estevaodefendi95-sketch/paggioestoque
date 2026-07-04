@@ -1026,11 +1026,16 @@
         if (!cloudCache) cloudCache = {};
         cloudCache[key] = value;
         const nowIso = new Date().toISOString();
+        const previousUpdatedAt = lastAppliedUpdatedAt;
+        lastAppliedUpdatedAt = nowIso;
         const { error } = await sb.from(TABLE).upsert(
           { tenant_id: TENANT_ID, data: cloudCache, updated_at: nowIso },
           { onConflict: 'tenant_id' }
         );
-        if (error) throw error;
+        if (error){
+          lastAppliedUpdatedAt = previousUpdatedAt;
+          throw error;
+        }
         lastAppliedUpdatedAt = nowIso;
       }
 
@@ -1042,6 +1047,11 @@
             (payload) => {
               const updatedAt = payload.new && payload.new.updated_at;
               if (!updatedAt || updatedAt === lastAppliedUpdatedAt) return; // foi esta própria sessão que salvou
+              const incoming = payload.new && payload.new.data;
+              if (JSON.stringify(incoming || {}) === JSON.stringify(cloudCache || {})){
+                lastAppliedUpdatedAt = updatedAt;
+                return;
+              }
               location.reload();
             }
           )
@@ -1433,7 +1443,30 @@
             const p = findProduct(inp.dataset.codigo);
             p.valorCompra = Math.max(0, parseFloat(inp.value||'0'));
             await saveProducts();
-            renderMateriais();
+            inp.value = (p.valorCompra||0).toFixed(2);
+            const row = inp.closest('tr');
+            if(row){
+              const totalCell = row.children[6];
+              if(totalCell) totalCell.textContent = fmtMoney(valorTotalDe(p));
+            }
+            document.getElementById('matValorTotalTag').textContent = 'Valor dos itens listados: '+fmtMoney(list.reduce((acc,item)=> acc + valorTotalDe(item), 0));
+            const resumoBox = document.getElementById('matValorPorModulo');
+            if(resumoBox){
+              const modulos = ['bar','limpeza','cozinha'];
+              resumoBox.innerHTML = modulos.map(m=>{
+                const itens = products.filter(item=>(item.modulo||'bar')===m);
+                const total = itens.reduce((acc,item)=> acc + valorTotalDe(item), 0);
+                return `<div class="ticket">
+                  <div class="stamp ok" style="font-size:9px;">${MODULE_LABELS[m]}</div>
+                  <div style="flex:1;min-width:0;"><span class="desc">${itens.length} material(is)</span></div>
+                  <div class="qty">${fmtMoney(total)}<small>valor total em estoque</small></div>
+                </div>`;
+              }).join('') + `<div class="ticket" style="border-top:2px solid var(--ink);">
+                  <div class="stamp critico" style="font-size:9px;">TOTAL</div>
+                  <div style="flex:1;min-width:0;"><span class="desc">Todos os módulos</span></div>
+                  <div class="qty" style="font-weight:700;">${fmtMoney(products.reduce((acc,item)=>acc+valorTotalDe(item),0))}<small>valor total geral</small></div>
+                </div>`;
+            }
             showToast('Valor de compra de "'+p.descricao+'" salvo.');
           });
         });

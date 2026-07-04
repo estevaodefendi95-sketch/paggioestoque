@@ -1,21 +1,18 @@
-## Problema
+Plano para corrigir o recarregamento ao mudar valores na aba Materiais:
 
-Ao editar o nome de um material (ou qualquer campo), a tela às vezes "pisca" / rola pro topo / perde o foco do campo — parece que a página inteira recarrega. Isso acontece porque o iframe do app é recarregado (`iframeRef.current.src = "/app.html?t=..."`) quando o Realtime devolve a mudança que a própria aba acabou de enviar.
+1. Corrigir o Realtime dentro do `public/app.html`
+   - Hoje o próprio `app.html` também escuta alterações em tempo real e chama `location.reload()`.
+   - Vou marcar a alteração local como já aplicada antes do `upsert`, para o retorno em tempo real da própria edição não ser tratado como mudança externa.
+   - Também vou comparar o JSON recebido com o estado em memória; se for o mesmo conteúdo, não recarrega.
 
-Causa: existe uma corrida entre o loop de sync (que envia o novo estado pro banco) e o Realtime (que recebe a notificação de volta). Enquanto o `upsert` ainda não terminou, `lastSyncedRef` ainda guarda o estado antigo, então o payload do Realtime parece "novo" e dispara o reload do iframe — mesmo sendo o eco da própria alteração local.
+2. Evitar redesenhar a tabela inteira ao alterar “Valor de compra”
+   - O campo de valor atualmente salva e chama `renderMateriais()`, recriando a tabela e podendo parecer atualização/reload.
+   - Vou salvar o valor sem reconstruir a tela inteira, atualizando apenas os totais necessários e mantendo o usuário na mesma posição.
 
-## O que muda
+3. Manter mudanças externas funcionando
+   - Alterações feitas por outro dispositivo/aba continuarão chegando.
+   - A diferença é que a própria edição local não vai mais recarregar a página nem tirar o usuário da aba/campo.
 
-Ajustar `src/routes/index.tsx` para que o eco do Realtime da própria aba nunca recarregue o iframe:
-
-1. No loop de push (poll de 2,5s), gravar `lastSyncedRef.current = current` **antes** de chamar o `upsert`, não depois. Assim, quando o Realtime devolver o mesmo JSON, a comparação `serialized === lastSyncedRef.current` já bate e o handler sai cedo, sem tocar no iframe.
-2. Em caso de erro no `upsert`, reverter `lastSyncedRef` pro valor anterior (pra não perder a próxima tentativa de sync).
-3. Mesmo cuidado no seed inicial (primeiro upsert quando a linha ainda não existia).
-
-Nenhuma mudança em `public/app.html`, no fluxo de edição, nas políticas do banco ou no login. Só corrige o motivo do reload.
-
-## Resultado esperado
-
-- Editar nome / mínimo / valor de compra / unidade de um material salva na nuvem normalmente, mas a tela não recarrega mais.
-- O usuário pode continuar editando o próximo campo sem perder posição de rolagem nem foco.
-- Alterações feitas por **outra** aba/dispositivo continuam chegando via Realtime e atualizando a tela como hoje.
+4. Validar no preview
+   - Testar edição do valor de compra em Materiais.
+   - Confirmar que salva, mostra feedback e não recarrega/não sai da tela.
