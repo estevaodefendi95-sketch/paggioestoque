@@ -988,8 +988,11 @@
         auth: { persistSession: false, autoRefreshToken: false }
       });
 
+      // Identifica esta aba/sessão de forma única, pra nunca confundir "eu mesmo salvando"
+      // com "outra pessoa salvou" (comparar timestamp ou o próprio JSON não é confiável).
+      const SESSION_ID = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now()+'-'+Math.random());
+
       let cloudCache = null;        // espelho em memória da linha compartilhada (products/movements/purchases)
-      let lastAppliedUpdatedAt = null;
       let authReady = false;
 
       // Esse arquivo pode ser aberto sozinho (fora do login) ou dentro do iframe da tela de login.
@@ -1018,40 +1021,31 @@
         const { data, error } = await sb.from(TABLE).select('data, updated_at').eq('tenant_id', TENANT_ID).maybeSingle();
         if (error) throw error;
         cloudCache = (data && data.data) || {};
-        lastAppliedUpdatedAt = data ? data.updated_at : null;
         return cloudCache;
       }
 
       async function cloudSaveKey(key, value){
         if (!cloudCache) cloudCache = {};
         cloudCache[key] = value;
+        cloudCache._writer = SESSION_ID; // marca esta gravação como "minha"
         const nowIso = new Date().toISOString();
-        const previousUpdatedAt = lastAppliedUpdatedAt;
-        lastAppliedUpdatedAt = nowIso;
         const { error } = await sb.from(TABLE).upsert(
           { tenant_id: TENANT_ID, data: cloudCache, updated_at: nowIso },
           { onConflict: 'tenant_id' }
         );
-        if (error){
-          lastAppliedUpdatedAt = previousUpdatedAt;
-          throw error;
-        }
-        lastAppliedUpdatedAt = nowIso;
+        if (error) throw error;
       }
 
-      // Tempo real: qualquer alteração salva por QUALQUER outra sessão recarrega esta tela na hora.
+      // Tempo real: alteração salva por OUTRA sessão recarrega esta tela.
+      // Alterações salvas por mim mesmo (mesma aba) nunca recarregam — evita perder
+      // o que você estava vendo/editando ao salvar seu próprio lançamento.
       function subscribeRealtime(){
         sb.channel('estoque_state_app_html')
           .on('postgres_changes',
             { event: '*', schema: 'public', table: TABLE, filter: `tenant_id=eq.${TENANT_ID}` },
             (payload) => {
-              const updatedAt = payload.new && payload.new.updated_at;
-              if (!updatedAt || updatedAt === lastAppliedUpdatedAt) return; // foi esta própria sessão que salvou
-              const incoming = payload.new && payload.new.data;
-              if (JSON.stringify(incoming || {}) === JSON.stringify(cloudCache || {})){
-                lastAppliedUpdatedAt = updatedAt;
-                return;
-              }
+              const writer = payload.new && payload.new.data && payload.new.data._writer;
+              if (writer === SESSION_ID) return; // fui eu mesmo que salvei, não recarrega
               location.reload();
             }
           )
