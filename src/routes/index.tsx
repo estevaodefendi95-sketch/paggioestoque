@@ -18,19 +18,11 @@ export const Route = createFileRoute("/")({
 
 const EMAIL = "paggio.adm@gmail.com";
 const PASSWORD = "Paggio1404!";
-const LS_KEY = "paggio-estoque-v1";
-const TABLE = "estoque_state";
-// Chave fixa: o estoque é único da Paggio, não depende de qual auth.users
-// fez login (isso é só o "cadeado" de acesso, não o dono dos dados).
-const TENANT_ID = "paggio";
 
 function AppEstoque() {
   const [userId, setUserId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
-  const [status, setStatus] = useState<"idle" | "syncing" | "saved" | "error">("idle");
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const lastSyncedRef = useRef<string>("");
-  const lastServerUpdatedRef = useRef<string>("");
   const iframeAuthReadyRef = useRef(false);
 
   function sendTokenToIframe(accessToken: string, refreshToken: string) {
@@ -56,148 +48,6 @@ function AppEstoque() {
     });
     return () => sub.subscription.unsubscribe();
   }, []);
-
-  // Initial pull + start sync loop
-  useEffect(() => {
-    if (!userId) return;
-    let cancelled = false;
-    let pollTimer: ReturnType<typeof setInterval> | null = null;
-
-    (async () => {
-      setStatus("syncing");
-      const { data, error } = await supabase
-        .from(TABLE)
-        .select("data, updated_at")
-        .eq("tenant_id", TENANT_ID)
-        .maybeSingle();
-      if (cancelled) return;
-
-      if (error) {
-        console.error("[sync] pull error", error);
-        setStatus("error");
-      } else if (data) {
-        // A linha compartilhada já existe na nuvem — ela é sempre a verdade,
-        // mesmo que esteja vazia (ex.: depois de uma limpeza intencional).
-        // Nunca sobrescrevemos a nuvem com sobra de localStorage nesse caso.
-        try {
-          const serialized = JSON.stringify(data.data ?? {});
-          localStorage.setItem(LS_KEY, serialized);
-          lastSyncedRef.current = serialized;
-          lastServerUpdatedRef.current = data.updated_at as string;
-        } catch (e) {
-          console.error(e);
-        }
-        setStatus("saved");
-      } else {
-        // A linha nunca existiu (primeiríssimo uso do sistema) → migra o
-        // que tiver neste navegador como ponto de partida único.
-        const local = safeReadLocal();
-        if (local) {
-          const parsed = JSON.parse(local);
-          // Marca como sincronizado antes do upsert pra evitar reload do
-          // iframe quando o Realtime devolver o eco.
-          lastSyncedRef.current = local;
-          const { error: upErr } = await supabase
-            .from(TABLE)
-            .upsert(
-              { tenant_id: TENANT_ID, data: parsed, updated_at: new Date().toISOString() },
-              { onConflict: "tenant_id" },
-            );
-          if (upErr) {
-            console.error("[sync] seed error", upErr);
-            lastSyncedRef.current = "";
-            setStatus("error");
-          } else {
-            setStatus("saved");
-          }
-
-        } else {
-          setStatus("saved");
-        }
-      }
-
-      // Poll: push local changes
-      pollTimer = setInterval(async () => {
-        const current = safeReadLocal();
-        if (!current || current === lastSyncedRef.current) return;
-        setStatus("syncing");
-        const parsed = JSON.parse(current);
-        const nowIso = new Date().toISOString();
-        // Marca como sincronizado ANTES do upsert pra que o eco do Realtime
-        // (que chega quase junto) não pense que é uma mudança externa e
-        // recarregue o iframe no meio da edição do usuário.
-        const previousSynced = lastSyncedRef.current;
-        lastSyncedRef.current = current;
-        const { error: upErr } = await supabase
-          .from(TABLE)
-          .upsert({ tenant_id: TENANT_ID, data: parsed, updated_at: nowIso }, { onConflict: "tenant_id" });
-        if (upErr) {
-          console.error("[sync] push error", upErr);
-          lastSyncedRef.current = previousSynced;
-          setStatus("error");
-        } else {
-          lastServerUpdatedRef.current = nowIso;
-
-          setStatus("saved");
-        }
-      }, 2500);
-    })();
-
-    // Pull on tab focus
-    const onFocus = async () => {
-      if (!userId) return;
-      const { data } = await supabase.from(TABLE).select("data, updated_at").eq("tenant_id", TENANT_ID).maybeSingle();
-      if (!data) return;
-      if ((data.updated_at as string) > lastServerUpdatedRef.current) {
-        const serialized = JSON.stringify(data.data);
-        if (serialized !== lastSyncedRef.current) {
-          localStorage.setItem(LS_KEY, serialized);
-          lastSyncedRef.current = serialized;
-          lastServerUpdatedRef.current = data.updated_at as string;
-          // Reload iframe so it re-reads localStorage
-          if (iframeRef.current) iframeRef.current.src = "/app.html?t=" + Date.now();
-        }
-      }
-    };
-    window.addEventListener("focus", onFocus);
-
-    return () => {
-      cancelled = true;
-      if (pollTimer) clearInterval(pollTimer);
-      window.removeEventListener("focus", onFocus);
-    };
-  }, [userId]);
-
-  // Realtime: qualquer alteração salva por QUALQUER sessão aparece na hora
-  // aqui, sem depender de trocar de aba/foco.
-  useEffect(() => {
-    if (!userId) return;
-    const channel = supabase
-      .channel("estoque_state_realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: TABLE, filter: `tenant_id=eq.${TENANT_ID}` },
-        (payload) => {
-          const newRow = payload.new as { data?: unknown; updated_at?: string } | undefined;
-          if (!newRow || newRow.updated_at === undefined) return;
-          const serialized = JSON.stringify(newRow.data ?? {});
-          if (serialized === lastSyncedRef.current) return;
-          try {
-            localStorage.setItem(LS_KEY, serialized);
-            lastSyncedRef.current = serialized;
-            lastServerUpdatedRef.current = newRow.updated_at as string;
-            if (iframeRef.current) iframeRef.current.src = "/app.html?t=" + Date.now();
-          } catch (e) {
-            console.error("[realtime] apply error", e);
-          }
-        },
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [userId]);
 
   // Handshake de login com o iframe: quando o app.html avisa que está pronto,
   // mandamos o token da sessão atual pra ele poder falar com o Supabase também.
@@ -244,14 +94,14 @@ function AppEstoque() {
             fontSize: 11,
             letterSpacing: ".06em",
             textTransform: "uppercase",
-            color: status === "error" ? "#E38B7A" : status === "syncing" ? "#D3A574" : "#8FB37E",
+            color: "#8FB37E",
             background: "rgba(32,36,31,.85)",
             padding: "5px 10px",
             borderRadius: 999,
             border: "1px solid #3a3f37",
           }}
         >
-          {status === "syncing" ? "Sincronizando…" : status === "error" ? "Erro sync" : "Sincronizado"}
+          Conectado
         </span>
         <button
           onClick={async () => {
@@ -274,14 +124,6 @@ function AppEstoque() {
       </div>
     </div>
   );
-}
-
-function safeReadLocal(): string | null {
-  try {
-    return localStorage.getItem(LS_KEY);
-  } catch {
-    return null;
-  }
 }
 
 function Login() {
